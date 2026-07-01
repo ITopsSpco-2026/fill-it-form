@@ -1,5 +1,5 @@
 """
-fill_it_form v9.0
+fill_it_form v9.1
 """
 
 import io
@@ -32,8 +32,7 @@ FIELDS = {
     "req_type":        (183.4, 281.0, 536.3, 296.0, 13, BLUE),
     "program":         (197.5, 309.0, 536.3, 324.0, 13, BLUE),
     "asset_tag":       (183.0, 330.0, 536.3, 345.0, 13, BLUE),  # อีเมลที่ร้องขอ (email template only)
-    "detail":          (183.2, 364.0, 536.3, 375.0, 13, BLUE),   # bot: 382→375 (dashed at pdfY=375.8)
-    "detail2":         ( 57.0, 376.0, 536.3, 393.0, 13, BLUE),   # top: 382→376, bot: 400→393 (dashed at pdfY=393.5)
+    "detail":          (183.2, 364.0, 536.3, 393.0, 13, BLUE),   # merged detail+detail2; wrapped
     "note":            (114.1, 505.0, 536.3, 572.0, 13, BLACK),  # bot expanded to 572 for multi-line wrap
     "sign_requester":  (134.0, 607.0, 223.0, 626.0, 13, BLACK),  # top 609→607: old text at pdfY=607.7
     "sign_date":       (134.0, 623.0, 223.0, 640.0, 12, BLACK),  # top 626→623: old date at pdfY=624.7
@@ -43,7 +42,7 @@ FIELDS = {
 }
 
 
-WRAP_FIELDS = {"note"}
+WRAP_FIELDS = {"note", "detail"}
 
 # Label overrides — draw white rect + new text to replace printed template labels
 # key: data key   value: (x0, top, x1, bot, fsize, color)
@@ -161,4 +160,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v9.0", 200
+    return "ok v9.1", 200
