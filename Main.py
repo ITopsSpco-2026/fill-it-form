@@ -1,5 +1,5 @@
 """
-fill_it_form v9.2
+fill_it_form v9.3
 """
 
 import io
@@ -60,26 +60,54 @@ LABEL_FONT = "CordiaNew"
 HIDE_EMAIL_LABEL_RECT = (50.0, 328.0, 183.0, 348.0)
 
 
-def wrap_text(c, text, x0, x1, top, fsize):
-    """Draw word-wrapped text starting from top of field, wrapping downward."""
-    max_w   = x1 - x0 - 4
-    line_h  = fsize * 1.4
-    descent = fsize * (2.75 / 11)
-    words   = text.split()
-    lines   = []
-    cur     = ""
-    for w in words:
-        test = (cur + " " + w).strip() if cur else w
-        if c.stringWidth(test, "Thai", fsize) <= max_w:
-            cur = test
-        else:
-            if cur:
-                lines.append(cur)
-            cur = w
-    if cur:
-        lines.append(cur)
+def _wrap_lines(c, text, max_w, fsize):
+    """Split text into wrapped lines at given font size."""
+    lines = []
+    for para in str(text).split("\n"):
+        words = para.split()
+        cur = ""
+        for w in words:
+            test = (cur + " " + w).strip() if cur else w
+            if c.stringWidth(test, "Thai", fsize) <= max_w:
+                cur = test
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = w
+        lines.append(cur)   # keep blank line for empty para
+    return lines
 
-    rl_top = PAGE_H - top
+
+def wrap_text(c, text, x0, x1, top, bot, fsize):
+    """Word-wrap within field; auto-shrink font so lines fit box height.
+
+    Falls back to truncation with '...' only if text still overflows at min font.
+    """
+    max_w   = x1 - x0 - 4
+    box_h   = bot - top
+    MIN_FONT = 8
+
+    # ลดฟอนต์ทีละ 1pt จนบรรทัดพอดีความสูงกล่อง
+    while fsize > MIN_FONT:
+        line_h = fsize * 1.4
+        lines  = _wrap_lines(c, text, max_w, fsize)
+        if len(lines) <= max(1, int(box_h / line_h)):
+            break
+        fsize -= 1
+
+    line_h    = fsize * 1.4
+    lines     = _wrap_lines(c, text, max_w, fsize)
+    max_lines = max(1, int(box_h / line_h))
+
+    # ยังเกินแม้ฟอนต์เล็กสุด → ตัดบรรทัดท้ายใส่ ...
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        lines[-1] = (last[:-3] if len(last) > 3 else last) + "..."
+
+    c.setFont("Thai", fsize)
+    descent = fsize * (2.75 / 11)
+    rl_top  = PAGE_H - top
     for i, line in enumerate(lines):
         y = rl_top - fsize + descent - i * line_h
         c.drawString(x0 + 2, y, line)
@@ -115,7 +143,7 @@ def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
         c.setFillColorRGB(*color)
         c.setFont("Thai", fsize)
         if field in WRAP_FIELDS:
-            wrap_text(c, value, x0, x1, top, fsize)
+            wrap_text(c, value, x0, x1, top, bot, fsize)
         else:
             c.drawString(x0 + 1, calc_text_y(top, bot, fsize), value)
 
@@ -171,4 +199,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v9.2", 200
+    return "ok v9.3", 200
