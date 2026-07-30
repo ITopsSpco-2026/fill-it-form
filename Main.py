@@ -1,5 +1,5 @@
 """
-fill_it_form v9.3
+fill_it_form v9.4
 """
 
 import io
@@ -79,27 +79,15 @@ def _wrap_lines(c, text, max_w, fsize):
 
 
 def wrap_text(c, text, x0, x1, top, bot, fsize):
-    """Word-wrap within field; auto-shrink font so lines fit box height.
-
-    Falls back to truncation with '...' only if text still overflows at min font.
-    """
-    max_w   = x1 - x0 - 4
-    box_h   = bot - top
-    MIN_FONT = 8
-
-    # ลดฟอนต์ทีละ 1pt จนบรรทัดพอดีความสูงกล่อง
-    while fsize > MIN_FONT:
-        line_h = fsize * 1.4
-        lines  = _wrap_lines(c, text, max_w, fsize)
-        if len(lines) <= max(1, int(box_h / line_h)):
-            break
-        fsize -= 1
-
+    """Word-wrap within field at fixed font; cap lines to box height, truncate with '...'."""
+    max_w     = x1 - x0 - 4
+    box_h     = bot - top
     line_h    = fsize * 1.4
-    lines     = _wrap_lines(c, text, max_w, fsize)
     max_lines = max(1, int(box_h / line_h))
 
-    # ยังเกินแม้ฟอนต์เล็กสุด → ตัดบรรทัดท้ายใส่ ...
+    lines = _wrap_lines(c, text, max_w, fsize)
+
+    # เกินความสูงกล่อง → ตัดบรรทัดท้ายใส่ ...
     if len(lines) > max_lines:
         lines = lines[:max_lines]
         last = lines[-1]
@@ -199,4 +187,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v9.3", 200
+    return "ok v9.4", 200
