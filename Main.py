@@ -1,5 +1,5 @@
 """
-fill_it_form v9.4
+fill_it_form v9.5
 """
 
 import io
@@ -61,20 +61,20 @@ HIDE_EMAIL_LABEL_RECT = (50.0, 328.0, 183.0, 348.0)
 
 
 def _wrap_lines(c, text, max_w, fsize):
-    """Split text into wrapped lines at given font size."""
+    """Split text into wrapped lines (continuous flow; newlines treated as spaces)."""
+    words = str(text).split()   # split on all whitespace incl. newlines → flow ต่อกัน
     lines = []
-    for para in str(text).split("\n"):
-        words = para.split()
-        cur = ""
-        for w in words:
-            test = (cur + " " + w).strip() if cur else w
-            if c.stringWidth(test, "Thai", fsize) <= max_w:
-                cur = test
-            else:
-                if cur:
-                    lines.append(cur)
-                cur = w
-        lines.append(cur)   # keep blank line for empty para
+    cur   = ""
+    for w in words:
+        test = (cur + " " + w).strip() if cur else w
+        if c.stringWidth(test, "Thai", fsize) <= max_w:
+            cur = test
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
     return lines
 
 
@@ -187,4 +187,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v9.4", 200
+    return "ok v9.5", 200
