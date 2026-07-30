@@ -1,5 +1,5 @@
 """
-fill_it_form v9.1
+fill_it_form v9.2
 """
 
 import io
@@ -54,6 +54,10 @@ LABEL_OVERRIDES = {
     "label_recorder":  (481.0, 655.0, 542.0, 693.0, 675.0, 687.9, 13, BLACK),
 }
 LABEL_FONT = "CordiaNew"
+
+# white rect ทับ label "อีเมลที่ร้องขอ" (งานโปรแกรม — ใช้ email template แต่ไม่ใช่คำขออีเมล)
+# (x0, top, x1, bot) — ปรับให้คลุม label จริง (แถวเดียวกับ asset_tag pdfY=330-345)
+HIDE_EMAIL_LABEL_RECT = (50.0, 328.0, 183.0, 348.0)
 
 
 def wrap_text(c, text, x0, x1, top, fsize):
@@ -130,6 +134,13 @@ def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
         c.setFont(LABEL_FONT, fsize)
         c.drawString(rx0 + 1, calc_text_y(ttop, tbot, fsize), value)
 
+    # ซ่อน label "อีเมลที่ร้องขอ" (งานโปรแกรม)
+    if data.get("hide_email_label"):
+        hx0, htop, hx1, hbot = HIDE_EMAIL_LABEL_RECT
+        c.setFillColorRGB(*WHITE)
+        c.setStrokeColorRGB(*WHITE)
+        c.rect(hx0, PAGE_H - hbot, hx1 - hx0, hbot - htop, fill=1, stroke=0)
+
     c.save()
     buf.seek(0)
 
@@ -160,4 +171,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v9.1", 200
+    return "ok v9.2", 200
