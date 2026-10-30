@@ -1,8 +1,9 @@
 """
-fill_it_form v9.5
+fill_it_form v9.6
 """
 
 import io
+import unicodedata
 import base64
 from flask import Flask, request, jsonify
 from pypdf import PdfReader, PdfWriter
@@ -32,7 +33,7 @@ FIELDS = {
     "req_type":        (183.4, 281.0, 536.3, 296.0, 13, BLUE),
     "program":         (197.5, 309.0, 536.3, 324.0, 13, BLUE),
     "asset_tag":       (183.0, 330.0, 536.3, 345.0, 13, BLUE),  # อีเมลที่ร้องขอ (email template only)
-    "detail":          (183.2, 364.0, 536.3, 393.0, 13, BLUE),   # merged detail+detail2; wrapped
+    "detail":          (183.2, 364.0, 536.3, 432.0, 13, BLUE),   # covers 3 dotted lines; overflow → page 2
     "note":            (114.1, 505.0, 536.3, 572.0, 13, BLACK),  # bot expanded to 572 for multi-line wrap
     "sign_requester":  (134.0, 607.0, 223.0, 626.0, 13, BLACK),  # top 609→607: old text at pdfY=607.7
     "sign_date":       (134.0, 623.0, 223.0, 640.0, 12, BLACK),  # top 626→623: old date at pdfY=624.7
@@ -43,6 +44,9 @@ FIELDS = {
 
 
 WRAP_FIELDS = {"note", "detail"}
+# overflow → full text on continuation page (audit: no silent truncation)
+CONT_LABELS = {"detail": "รายละเอียดร้องขอ", "note": "หมายเหตุ"}
+CONT_MARK   = "...(มีต่อหน้า 2)"
 
 # Label overrides — draw white rect + new text to replace printed template labels
 # key: data key   value: (x0, top, x1, bot, fsize, color)
@@ -60,9 +64,22 @@ LABEL_FONT = "CordiaNew"
 HIDE_EMAIL_LABEL_RECT = (50.0, 328.0, 183.0, 348.0)
 
 
+def _split_long(c, word, max_w, fsize):
+    """Break a word wider than max_w (Thai has no spaces) without orphaning combining marks."""
+    parts, cur = [], ""
+    for ch in word:
+        if cur and not unicodedata.combining(ch) and c.stringWidth(cur + ch, "Thai", fsize) > max_w:
+            parts.append(cur)
+            cur = ""
+        cur += ch
+    return parts + [cur] if cur else parts
+
+
 def _wrap_lines(c, text, max_w, fsize):
     """Split text into wrapped lines (continuous flow; newlines treated as spaces)."""
-    words = str(text).split()   # split on all whitespace incl. newlines → flow ต่อกัน
+    words = []
+    for w in str(text).split():   # split on all whitespace incl. newlines → flow ต่อกัน
+        words += _split_long(c, w, max_w, fsize)   # returns [w] when it already fits
     lines = []
     cur   = ""
     for w in words:
@@ -79,19 +96,20 @@ def _wrap_lines(c, text, max_w, fsize):
 
 
 def wrap_text(c, text, x0, x1, top, bot, fsize):
-    """Word-wrap within field at fixed font; cap lines to box height, truncate with '...'."""
+    """Word-wrap within field at fixed font. Returns True if text overflowed (marked, continued on page 2)."""
     max_w     = x1 - x0 - 4
     box_h     = bot - top
     line_h    = fsize * 1.4
     max_lines = max(1, int(box_h / line_h))
 
     lines = _wrap_lines(c, text, max_w, fsize)
-
-    # เกินความสูงกล่อง → ตัดบรรทัดท้ายใส่ ...
-    if len(lines) > max_lines:
+    overflow = len(lines) > max_lines
+    if overflow:
         lines = lines[:max_lines]
         last = lines[-1]
-        lines[-1] = (last[:-3] if len(last) > 3 else last) + "..."
+        while last and c.stringWidth(last + CONT_MARK, "Thai", fsize) > max_w:
+            last = last[:-1]
+        lines[-1] = last + CONT_MARK
 
     c.setFont("Thai", fsize)
     descent = fsize * (2.75 / 11)
@@ -99,6 +117,35 @@ def wrap_text(c, text, x0, x1, top, bot, fsize):
     for i, line in enumerate(lines):
         y = rl_top - fsize + descent - i * line_h
         c.drawString(x0 + 2, y, line)
+    return overflow
+
+
+def draw_continuation(c, data, fields):
+    """Extra page(s) with the full text of overflowed fields."""
+    left, fsize, line_h = 60, 14, 14 * 1.4
+    c.showPage()
+    c.setFillColorRGB(*BLACK)
+    y = PAGE_H - 60
+    c.setFont("Thai", 16)
+    c.drawString(left, y, "รายละเอียดเพิ่มเติม (ต่อจากหน้า 1)   เลขที่คำขอ: " + str(data.get("doc_no", "")))
+    y -= 32
+    for f in fields:
+        c.setFont("Thai", 15)
+        c.drawString(left, y, CONT_LABELS[f] + " :")
+        y -= 22
+        # page 2 keeps the requester's line breaks (page 1 flows continuously)
+        lines = []
+        for para in str(data[f]).splitlines():
+            lines += _wrap_lines(c, para, PAGE_W - 2 * left - 10, fsize) or [""]
+        for line in lines:
+            if y < 60:
+                c.showPage()
+                c.setFillColorRGB(*BLACK)
+                y = PAGE_H - 60
+            c.setFont("Thai", fsize)
+            c.drawString(left + 10, y, line)
+            y -= line_h
+        y -= 12
 
 
 def calc_text_y(top, bot, fsize):
@@ -122,17 +169,18 @@ def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
     buf = io.BytesIO()
     c   = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
 
+    overflowed = []
     for field, (x0, top, x1, bot, fsize, color) in FIELDS.items():
         value = str(data.get(field, "") or "")
         if not value:
             continue
 
-        rl_bot = PAGE_H - bot
         c.setFillColorRGB(*color)
-        c.setFont("Thai", fsize)
         if field in WRAP_FIELDS:
-            wrap_text(c, value, x0, x1, top, bot, fsize)
+            if wrap_text(c, value, x0, x1, top, bot, fsize):
+                overflowed.append(field)
         else:
+            c.setFont("Thai", fsize)
             c.drawString(x0 + 1, calc_text_y(top, bot, fsize), value)
 
     # Label overrides — white rect + new label text (repair template only)
@@ -157,6 +205,9 @@ def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
         c.setStrokeColorRGB(*WHITE)
         c.rect(hx0, PAGE_H - hbot, hx1 - hx0, hbot - htop, fill=1, stroke=0)
 
+    if overflowed:
+        draw_continuation(c, data, overflowed)
+
     c.save()
     buf.seek(0)
 
@@ -166,6 +217,8 @@ def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
     page     = template.pages[0]
     page.merge_page(overlay.pages[0])
     writer.add_page(page)
+    for extra in overlay.pages[1:]:   # continuation page(s)
+        writer.add_page(extra)
 
     out = io.BytesIO()
     writer.write(out)
@@ -187,4 +240,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v9.5", 200
+    return "ok v9.6", 200
