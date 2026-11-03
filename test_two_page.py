@@ -34,6 +34,9 @@ d = fill(signers=SIGNERS, acceptors=[], no_accept_reason="ใบนี้ปิ�
 assert "ไม่มี เนื่องจากใบนี้ปิดอัตโนมัติ" in d[1].get_text()
 assert "ผู้ตรวจรับ" not in d[0].get_text(clip=fitz.Rect(*Main.SIGN_AREA))
 
+d = fill(signers=SIGNERS, acceptors=[])
+assert len(d) == 2 and "2." not in d[1].get_text() and "ผู้ตรวจรับ" not in d[0].get_text(), "self request → no section 2"
+
 d = fill(signers=SIGNERS, acceptors=["คนที่ %d" % i for i in range(1, 10)], detail="ยาว " * 400)
 assert len(d) == 4, len(d)   # page 1, signatures x2, continuation
 assert "(มีต่อหน้า 4)" in d[0].get_text() and "ส่วนลงนาม (ต่อ)" in d[2].get_text() and "ต่อจากหน้า 1" in d[3].get_text()

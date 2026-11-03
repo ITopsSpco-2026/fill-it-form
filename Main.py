@@ -1,5 +1,5 @@
 """
-fill_it_form v10.0
+fill_it_form v10.1
 """
 
 import io
@@ -214,6 +214,8 @@ def draw_sign_pages(c, data):
     top = rows(top + 40, [tuple(s) for s in data["signers"]])
 
     acceptors = data.get("acceptors") or []
+    if not acceptors and not data.get("no_accept_reason"):
+        return len(pages)   # reporter asked for themselves: they already sign as requester, no section 2
     if top > 610:   # heading + statement + first row must stay together
         top = new_page("ส่วนลงนาม (ต่อ)")
     c.setFillColorRGB(*BLACK)
@@ -348,4 +350,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v10.0", 200
+    return "ok v10.1", 200
