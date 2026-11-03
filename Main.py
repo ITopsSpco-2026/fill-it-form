@@ -1,5 +1,5 @@
 """
-fill_it_form v9.6
+fill_it_form v10.0
 """
 
 import io
@@ -46,7 +46,12 @@ FIELDS = {
 WRAP_FIELDS = {"note", "detail"}
 # overflow → full text on continuation page (audit: no silent truncation)
 CONT_LABELS = {"detail": "รายละเอียดร้องขอ", "note": "หมายเหตุ"}
-CONT_MARK   = "...(มีต่อหน้า 2)"
+CONT_MARK   = "...(มีต่อหน้า {})"
+
+# Two-page form (audit Q3-69), used when data has "signers": page 1's signature section is removed
+# for real (redacted, not covered) and every signature goes on page 2 — the form's signers, then the
+# users named in the request who accept the work ("acceptors").
+SIGN_AREA = (58, 576, 559, 737)   # (x0, top, x1, bot) page 1 signature section, inside the border
 
 # Label overrides — draw white rect + new text to replace printed template labels
 # key: data key   value: (x0, top, x1, bot, fsize, color)
@@ -95,8 +100,8 @@ def _wrap_lines(c, text, max_w, fsize):
     return lines
 
 
-def wrap_text(c, text, x0, x1, top, bot, fsize):
-    """Word-wrap within field at fixed font. Returns True if text overflowed (marked, continued on page 2)."""
+def wrap_text(c, text, x0, x1, top, bot, fsize, cont_page=2):
+    """Word-wrap within field at fixed font. Returns True if text overflowed (marked, continued on cont_page)."""
     max_w     = x1 - x0 - 4
     box_h     = bot - top
     line_h    = fsize * 1.4
@@ -105,11 +110,12 @@ def wrap_text(c, text, x0, x1, top, bot, fsize):
     lines = _wrap_lines(c, text, max_w, fsize)
     overflow = len(lines) > max_lines
     if overflow:
+        mark  = CONT_MARK.format(cont_page)
         lines = lines[:max_lines]
         last = lines[-1]
-        while last and c.stringWidth(last + CONT_MARK, "Thai", fsize) > max_w:
+        while last and c.stringWidth(last + mark, "Thai", fsize) > max_w:
             last = last[:-1]
-        lines[-1] = last + CONT_MARK
+        lines[-1] = last + mark
 
     c.setFont("Thai", fsize)
     descent = fsize * (2.75 / 11)
@@ -162,9 +168,109 @@ def calc_text_y(top, bot, fsize):
     return max(centered, min_y)
 
 
+def sig_block(c, x, y, role, name, bw=228):
+    """ลงชื่อ ...... role / ( name ) / วันที่ — no employee id or department."""
+    c.setFillColorRGB(*BLACK)
+    c.setFont("Thai", 14)
+    dots = "."
+    while c.stringWidth("ลงชื่อ " + dots + ". " + role, "Thai", 14) <= bw:
+        dots += "."
+    c.drawString(x, y, "ลงชื่อ " + dots + " " + role)
+    mid = x + bw / 2
+    c.drawCentredString(mid, y - 22, "( " + (name or "." * 40) + " )")
+    c.drawCentredString(mid, y - 44, "วันที่ ........ / ........ / ............")
+
+
+def draw_sign_pages(c, data):
+    """Signature page(s): 1. the form's signers  2. acceptors, or why there are none. Returns the page count."""
+    pages = []
+
+    def new_page(title):
+        if pages:
+            c.showPage()
+        pages.append(title)
+        c.setStrokeColorRGB(*BLACK)
+        c.setLineWidth(1)
+        c.rect(55.6, PAGE_H - 756, 505.6, 708.2, fill=0, stroke=1)
+        c.setFillColorRGB(*BLACK)
+        c.setFont("Thai", 18)
+        c.drawCentredString(PAGE_W / 2, PAGE_H - 82, title)
+        c.setFont("Thai", 15)
+        c.drawCentredString(PAGE_W / 2, PAGE_H - 102, "เลขที่คำขอ " + str(data.get("doc_no", "")))
+        return 140
+
+    def rows(top, blocks, pitch=80):   # two blocks per row; a full page continues on the next
+        for i in range(0, len(blocks), 2):
+            if top > 690:
+                top = new_page("ส่วนลงนาม (ต่อ)") + 40
+            for j, (role, name) in enumerate(blocks[i:i + 2]):
+                sig_block(c, 72 + j * 250, PAGE_H - top, role, name)
+            top += pitch
+        return top
+
+    top = new_page("ส่วนลงนาม (หน้า 2)")
+    c.setFont("Thai", 16)
+    c.drawString(72, PAGE_H - top, "1. ผู้ลงนามตามแบบฟอร์ม")
+    top = rows(top + 40, [tuple(s) for s in data["signers"]])
+
+    acceptors = data.get("acceptors") or []
+    if top > 610:   # heading + statement + first row must stay together
+        top = new_page("ส่วนลงนาม (ต่อ)")
+    c.setFillColorRGB(*BLACK)
+    c.setFont("Thai", 16)
+    if acceptors:
+        c.drawString(72, PAGE_H - top - 20, "2. ผู้ใช้งานตามรายละเอียดคำขอ (ลงนามตรวจรับ)")
+        c.setFont("Thai", 14)
+        c.drawString(90, PAGE_H - top - 42, "ข้าพเจ้าได้ตรวจรับแล้ว สามารถใช้งานได้ตรงตามที่แก้ไข/ปรับตั้งในใบคำขอนี้")
+        rows(top + 85, [("ผู้ตรวจรับ", n) for n in acceptors])
+    else:
+        c.drawString(72, PAGE_H - top - 20, "2. ผู้ตรวจรับ")
+        c.setFont("Thai", 14)
+        reason = "ไม่มี เนื่องจาก" + str(data.get("no_accept_reason") or "คำขอนี้ไม่ได้ดำเนินการ")
+        for i, line in enumerate(_wrap_lines(c, reason, PAGE_W - 180, 14)):
+            c.drawString(90, PAGE_H - top - 42 - i * 20, line)
+    return len(pages)
+
+
+def move_signatures(pdf_bytes, data):
+    """Page 1: remove the template's signature section (text gone from the file), mark where it went."""
+    import fitz   # PyMuPDF — only the two-page form needs it
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
+    x0, _, x1, _ = SIGN_AREA
+    c.setStrokeColorRGB(*BLACK)
+    c.setDash(4, 3)
+    c.rect(x0 + 40, PAGE_H - 690, x1 - x0 - 80, 66, fill=0, stroke=1)
+    c.setFillColorRGB(*BLACK)
+    c.setFont("Thai", 18)
+    c.drawCentredString(PAGE_W / 2, PAGE_H - 650, "ส่วนลงนาม อยู่ที่หน้า 2")
+    roles = [s[0] for s in data["signers"]] + (["ผู้ตรวจรับ"] if data.get("acceptors") else [])
+    c.setFont("Thai", 13)
+    c.drawCentredString(PAGE_W / 2, PAGE_H - 672, " · ".join(roles))
+    c.save()
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pg = doc[0]
+    pg.add_redact_annot(fitz.Rect(*SIGN_AREA), fill=(1, 1, 1))
+    pg.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_LINE_ART_NONE)
+    pg.show_pdf_page(pg.rect, fitz.open(stream=buf.getvalue(), filetype="pdf"), 0, overlay=True)
+    return doc.tobytes(garbage=3, deflate=True)
+
+
 def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
     data = dict(data)
     data["sign_approver"] = data.get("sign_approver") or "ภาณุ ธีรภานุ"
+    two_page = bool(data.get("signers"))
+
+    sign_pages = None
+    if two_page:
+        sbuf = io.BytesIO()
+        sc = canvas.Canvas(sbuf, pagesize=(PAGE_W, PAGE_H))
+        draw_sign_pages(sc, data)
+        sc.save()
+        sbuf.seek(0)
+        sign_pages = PdfReader(sbuf).pages
+    cont_page = 2 + (len(sign_pages) if two_page else 0)
 
     buf = io.BytesIO()
     c   = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
@@ -172,19 +278,19 @@ def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
     overflowed = []
     for field, (x0, top, x1, bot, fsize, color) in FIELDS.items():
         value = str(data.get(field, "") or "")
-        if not value:
+        if not value or (two_page and field.startswith("sign_")):
             continue
 
         c.setFillColorRGB(*color)
         if field in WRAP_FIELDS:
-            if wrap_text(c, value, x0, x1, top, bot, fsize):
+            if wrap_text(c, value, x0, x1, top, bot, fsize, cont_page):
                 overflowed.append(field)
         else:
             c.setFont("Thai", fsize)
             c.drawString(x0 + 1, calc_text_y(top, bot, fsize), value)
 
-    # Label overrides — white rect + new label text (repair template only)
-    for field, (rx0, rtop, rx1, rbot, ttop, tbot, fsize, color) in LABEL_OVERRIDES.items():
+    # Label overrides — white rect + new label text (repair template only; they sit in the signature section)
+    for field, (rx0, rtop, rx1, rbot, ttop, tbot, fsize, color) in ({} if two_page else LABEL_OVERRIDES).items():
         value = str(data.get(field, "") or "")
         if not value:
             continue
@@ -217,12 +323,14 @@ def fill_pdf(data: dict, template_bytes: bytes) -> bytes:
     page     = template.pages[0]
     page.merge_page(overlay.pages[0])
     writer.add_page(page)
+    for extra in sign_pages or []:    # signature page(s) right after page 1
+        writer.add_page(extra)
     for extra in overlay.pages[1:]:   # continuation page(s)
         writer.add_page(extra)
 
     out = io.BytesIO()
     writer.write(out)
-    return out.getvalue()
+    return move_signatures(out.getvalue(), data) if two_page else out.getvalue()
 
 
 app = Flask(__name__)
@@ -240,4 +348,4 @@ def handle_fill_it_form():
 
 @app.route("/", methods=["GET"])
 def health():
-    return "ok v9.6", 200
+    return "ok v10.0", 200
